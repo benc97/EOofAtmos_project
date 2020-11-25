@@ -1,0 +1,86 @@
+---
+title: "EarthObs_project"
+author: "Ben Coombs"
+date: "25/11/2020"
+output: html_document
+---
+
+## Importing necessary libraries
+
+```{r echo=FALSE}
+library(openair)
+library(tidyverse)
+library(leaflet)
+library(lubridate)
+library(knitr)
+```
+
+## Identifying the air quality sensors in Alesund
+
+```{r}
+#Identify Norwegian air quality sensors that can be mapped from the European database
+norway_meta <- importMeta(source = "Europe", all = TRUE) %>%
+  filter(country == "norway", !is.na(latitude), !is.na(longitude))
+
+#Map the sensors to identify those in Alesund
+Norway_sensor_map <- leaflet(data = norway_meta) %>%
+  addTiles() %>%
+  addMarkers(~longitude, ~latitude, popup = ~as.character(site), label = ~as.character(site))
+  
+Norway_sensor_map %>%
+  setView(lng = 8.468946, lat = 60.472023, zoom = 5)
+```
+
+The map above shows the locations of all ground based sensors in the European database. Unfortunately, there are no sensors available inside the World Heritage fjords. However, a popular port-of-call for cruise ships before going into the Fjords is Alesund, for which there are 3 sensors in the database. Their locations relative to the port are shown below:
+
+```{r echo=FALSE}
+Norway_sensor_map %>%
+  setView(lng = 6.1495, lat = 62.4722, zoom = 14)
+```
+
+Now we need to collate the data available from all three of these sensors. The site names are only available in the metadata; in the `importEurope` dataset they are identified by the `code` variable of the metadata, so we will need to find these.
+
+Unfortunately, we get an error when trying to get data for `Posthuskrysset`, so we'll have to leave this one out.
+
+```{r}
+Alesund_codes <- norway_meta %>%
+  filter(site %in% c("Karl Eriksens plass", "Grimmerhaugen")) %>%
+  pull(code)
+
+#Get air quality data for these sites for May 2019 from European database
+Alesund_air_quality <- importEurope(site = Alesund_codes,
+                                    year = "2019"
+                                    ) %>%
+  filter( date >= as.Date("2019-05-01"), 
+         date <= as.Date("2019-05-31")
+         )
+```
+
+For each hour, we want the `nox` measurements from site `no0116a`, and the average `pm10` measurements of the two sites. Then we can plot them to see how they behave over the month of May.
+
+```{r}
+#First select only relevant columns
+Alesund_air_qual_reformatted <- Alesund_air_quality %>%
+  select(-no, -no2) %>%
+  pivot_wider(names_from = code, values_from = c(nox, pm10)) %>%
+  select(-nox_no0070a) %>%
+  mutate(
+    avg_pm10 = (pm10_no0070a + pm10_no0116a)/2
+  ) %>%
+  rename(nox = nox_no0116a) %>%
+  select(-pm10_no0070a, -pm10_no0116a) 
+
+nox_plot <- Alesund_air_qual_reformatted%>%
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = nox))
+
+pm10_plot <- Alesund_air_qual_reformatted%>%
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = avg_pm10))
+
+nox_plot
+pm10_plot
+
+```
+
+Our next mission to create a new column `no_cruise_ships` that tells us the number of cruise ships at the port for each hour. The file `alesund_cruise_schedule.csv` contains the cruise ship schedule for 2019.
