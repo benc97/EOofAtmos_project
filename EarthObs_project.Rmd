@@ -13,6 +13,7 @@ library(tidyverse)
 library(leaflet)
 library(lubridate)
 library(knitr)
+library(chron)
 ```
 
 ## Identifying the air quality sensors in Alesund
@@ -52,7 +53,7 @@ Alesund_air_quality <- importEurope(site = Alesund_codes,
                                     year = "2019"
                                     ) %>%
   filter( date >= as.Date("2019-05-01"), 
-         date <= as.Date("2019-05-31")
+         date < as.Date("2019-06-01")
          )
 ```
 
@@ -83,4 +84,59 @@ pm10_plot
 
 ```
 
-Our next mission to create a new column `no_cruise_ships` that tells us the number of cruise ships at the port for each hour. The file `alesund_cruise_schedule.csv` contains the cruise ship schedule for 2019.
+Our next mission is to create a new column `num_cruise_ships` that tells us the number of cruise ships at the port for each hour. The file `alesund_cruise_schedule.csv` contains the cruise ship schedule for 2019.
+
+```{r}
+cruises_2019_orig <- read.csv("alesund_cruise_schedule_2019.csv")
+
+#STILL NEED TO RESOLVE NA ISSUE RATHER THAN REMOVING
+cruises_2019 <- cruises_2019_orig %>%
+  mutate(
+    arrive = na_if(arrive, ""),
+    depart = na_if(depart, "")
+  ) %>%
+  filter(!is.na(arrive), !is.na(depart)) %>%
+  mutate(
+    arrive = paste(date, arrive, sep = " "),
+    depart = paste(date, depart, sep = " ")
+  )
+
+#format arrive and depart columns (couldn't get a for loop to work here either..)
+cruises_2019$arrive <- as.POSIXct(cruises_2019$arrive, format = "%d-%b-%y %H:%M")
+cruises_2019$depart <- as.POSIXct(cruises_2019$depart, format = "%d-%b-%y %H:%M")
+
+cruises_2019 <- cruises_2019 %>%
+  filter(arrive >= as.Date("2019-05-01 00:00:00") & depart < as.Date("2019-06-01 00:00:00"))
+```
+
+Now let's try getting the `num_cruise_ships` column
+
+```{r}
+Alesund_air_qual_ships <- Alesund_air_qual_reformatted %>%
+  mutate(
+    #Create col with initial value of 0
+    num_cruise_ships = 0
+  )
+
+for (i in 1:nrow(Alesund_air_qual_ships)){
+  #print(Alesund_air_qual_ships$date[i])
+  for (j in 1:nrow(cruises_2019)){
+    if (Alesund_air_qual_ships$date[i] >= cruises_2019$arrive[j] & Alesund_air_qual_ships$date[i] <= cruises_2019$depart[j]){
+      Alesund_air_qual_ships$num_cruise_ships[i+1] = Alesund_air_qual_ships$num_cruise_ships[i+1] + 1
+    } 
+  }
+}
+
+nox_plot_ships <- Alesund_air_qual_ships %>%
+  ggplot(aes(x = date, y = nox, colour = num_cruise_ships)) +
+  geom_line()
+nox_plot_ships
+
+pm10_plot_ships <- Alesund_air_qual_ships %>%
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = avg_pm10))
+
+nox_plot_ships
+pm10_plot_ships
+```
+
